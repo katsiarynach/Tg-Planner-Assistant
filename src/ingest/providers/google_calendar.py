@@ -1,16 +1,14 @@
-from __future__ import annotations
 import os
 from datetime import datetime, timedelta
-from typing import Iterable, Dict, Any
-
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
+from shared.models.calendar_event import CalendarEvent
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
-
-CREDENTIALS_PATH = "credentials.json"
-TOKEN_PATH = "token.json"
+CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS")
+TOKEN_PATH = os.getenv("GOOGLE_TOKEN")
 
 
 def _get_creds():
@@ -28,8 +26,18 @@ def _get_creds():
     return creds
 
 
+def to_iso(dct: dict):
+    if not dct:
+        return ""
+    if dct.get("dateTime"):
+        return dct["dateTime"]
+    if dct.get("date"):
+        return dct["date"] + "T00:00:00Z"
+    return ""
+
+
 def fetch_events(calendar_id: str = "primary", time_min: datetime | None = None, time_max: datetime | None = None,
-                 max_results: int = 2500) -> Iterable[Dict[str, Any]]:
+                 max_results: int = 2500) -> [CalendarEvent]:
     creds = _get_creds()
     service = build("calendar", "v3", credentials=creds)
 
@@ -48,30 +56,14 @@ def fetch_events(calendar_id: str = "primary", time_min: datetime | None = None,
     ).execute()
 
     for item in events_result.get("items", []):
-        external_id = item.get("id")
-        title = item.get("summary") or ""
-        description = item.get("description") or ""
-        location = item.get("location") or ""
-        attendees = [a.get("email") or a.get("displayName") or "" for a in item.get("attendees", [])]
-
-        def to_iso(dct: dict, key: str) -> str:
-            if not dct:
-                return ""
-            if dct.get("dateTime"):
-                return dct["dateTime"]
-            if dct.get("date"):
-                return dct["date"] + "T00:00:00Z"
-            return ""
-
-        start_iso = to_iso(item.get("start", {}), "start")
-        end_iso = to_iso(item.get("end", {}), "end")
-
-        yield {
-            "external_id": external_id,
-            "title": title,
-            "description": description,
-            "location": location,
-            "participants": [p for p in attendees if p],
-            "start_ts": start_iso,
-            "end_ts": end_iso,
-        }
+        yield CalendarEvent(
+            id=item.get("id"),
+            calendar="google",
+            calendar_type=calendar_id,
+            title=item.get("summary"),
+            description=item.get("description"),
+            location=item.get("location"),
+            participants=[a.get("email") or a.get("displayName") or "" for a in item.get("attendees", [])],
+            start_ts=to_iso(item.get("start", {})),
+            end_ts=to_iso(item.get("end", {}))
+        )
